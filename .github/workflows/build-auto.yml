@@ -24,6 +24,23 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # 1️⃣ Trivy Scan Job
+  trivy-scan:
+    name: 🔍 Security scan with Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (filesystem scan)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: 'fs'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '1' # Échoue si vulnérabilités trouvées
+
   build-and-push:
     runs-on: ubuntu-latest
 
