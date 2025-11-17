@@ -1,133 +1,150 @@
-name: 🐳 Docker Image & Deploy (Auto)
+name: 🐳 Docker Build & Terraform Deploy (LocalStack)
 
 on:
   push:
     branches:
       - main
       - release
-  workflow_call:
-    inputs:
-      dockerfile:
-        required: false
-        type: string
-        default: ./Dockerfile
-      context:
-        required: false
-        type: string
-        default: .
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  AWS_REGION: us-east-1
+  LOCALSTACK_ENDPOINT: http://localhost:4566
 
 jobs:
-  # 1️⃣ Trivy Scan Job
-  trivy-scan:
-    name: Security scan with Trivy
+  # -----------------------------
+  # 1️⃣ Trivy filesystem scan
+  # -----------------------------
+  trivy-fs:
+    name: Trivy filesystem scan
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔍 Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@0.20.0
+      - name: Trivy FS scan
+        uses: aquasecurity/trivy-action@v0.20.0
         with:
-          scan-type: 'fs'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          vuln-type: 'os,library'
-          exit-code: '1'
-
-  # 2️⃣ Docker Image Job
-  docker-image:
-    name: Docker Image
-    runs-on: ubuntu-latest
-    needs: trivy-scan
-
-    outputs:
-      image_tag: ${{ steps.tags.outputs.tags }}
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🐳 Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 🏷️ Generate tags
-        id: tags
-        run: |
-          BRANCH_NAME="${{ github.ref_name }}"
-
-          if [[ "$BRANCH_NAME" == "main" ]]; then
-            TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          else
-            echo "Branch $BRANCH_NAME non autorisée."
-            exit 1
-          fi
-
-          echo "tags=$TAG" >> $GITHUB_OUTPUT
-
-      - name: 📝 Copy .env.devops → .env
-        run: |
-          if [ -f .env.devops ]; then
-            cp .env.devops .env
-          fi
-
-      - name: 🐳 Docker image (no push)
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          push: false
-          load: true
-          tags: ${{ steps.tags.outputs.tags }}
-
-  # 3️⃣ Trivy Image Scan
-  trivy-image-scan:
-    name: Trivy Scan (Docker Image)
-    runs-on: ubuntu-latest
-    needs: docker-image
-
-    steps:
-      - name: 🔍 Scan Docker image
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          scan-type: image
-          image-ref: ${{ needs.docker-image.outputs.image_tag }}
+          scan-type: fs
           format: table
           severity: CRITICAL,HIGH
           vuln-type: os,library
           exit-code: 1
 
-  # 4️⃣ Push Job
-  push-image:
-    name: Push Docker Image
+  # -----------------------------
+  # 2️⃣ Build Docker image
+  # -----------------------------
+  build-image:
+    name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: trivy-image-scan
+    needs: trivy-fs
+    outputs:
+      image_tag: ${{ steps.set_tag.outputs.full_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate Docker tag
+        id: set_tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          BRANCH="${GITHUB_REF_NAME}"
+          if [[ "$BRANCH" == "main" ]]; then
+            TAG="latest"
+          else
+            TAG="${BRANCH}-${SHORT_SHA}"
+          fi
+          FULL_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "full_tag=$FULL_TAG" >> $GITHUB_OUTPUT
+          echo "Docker image tag: $FULL_TAG"
+
+      - name: Copy .env.devops → .env
+        run: |
+          if [ -f .env.devops ]; then cp .env.devops .env; fi
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.set_tag.outputs.full_tag }}
+
+  # -----------------------------
+  # 3️⃣ Trivy Docker image scan
+  # -----------------------------
+  trivy-image:
+    name: Trivy Docker image scan
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          scan-type: image
+          image-ref: ${{ needs.build-image.outputs.image_tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: 1
+
+  # -----------------------------
+  # 4️⃣ Push Docker image to GHCR
+  # -----------------------------
+  push-image:
+    name: Push Docker image to GHCR
+    runs-on: ubuntu-latest
+    needs: trivy-image
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🔐 Login to Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 📤 Push image
-        run: docker push ${{ needs.docker-image.outputs.image_tag }}
+      - name: Push Docker image
+        run: docker push ${{ needs.build-image.outputs.image_tag }}
 
-      - name: 📝 Output image info
-        run: |
-         echo "🐳 Image poussée : ${{ needs.docker-image.outputs.image_tag }}"
+  # -----------------------------
+  # 5️⃣ Terraform deploy on LocalStack
+  # -----------------------------
+  terraform-apply:
+    name: Terraform Apply (LocalStack)
+    runs-on: ubuntu-latest
+    needs: push-image
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: ${{ env.AWS_REGION }}
+      LOCALSTACK_ENDPOINT: ${{ env.LOCALSTACK_ENDPOINT }}
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+        with:
+          path: infra
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.9.0
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve
