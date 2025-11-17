@@ -1,4 +1,4 @@
-name: 🐳 Docker Build & Deploy (Auto)
+name: 🐳 Docker Image & Deploy (Auto)
 
 on:
   push:
@@ -15,9 +15,6 @@ on:
         required: false
         type: string
         default: .
-    # secrets:
-    #   GITHUB_TOKEN:
-    #     required: true
 
 env:
   REGISTRY: ghcr.io
@@ -32,18 +29,18 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Trivy (filesystem scan)
+      - name: 🔍 Trivy (filesystem scan)
         uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: 'fs'
           format: 'table'
           severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
-          exit-code: '1' # Échoue si vulnérabilités trouvées
+          exit-code: '1'
 
-    # 2️⃣ Build Job
-  build-image:
-    name: Build Docker Image
+  # 2️⃣ Docker Image Job
+  docker-image:
+    name: Docker Image
     runs-on: ubuntu-latest
     needs: trivy-scan
 
@@ -58,10 +55,10 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: 🐳 Set up Docker Buildx
+      - name: 🐳 Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 📋 Generate tags (main → latest)
+      - name: 🏷️ Generate tags
         id: tags
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
@@ -74,19 +71,14 @@ jobs:
           fi
 
           echo "tags=$TAG" >> $GITHUB_OUTPUT
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "Generated tag: $TAG"
 
-      - name: 📄 Copy .env.devops to .env
+      - name: 📝 Copy .env.devops → .env
         run: |
           if [ -f .env.devops ]; then
             cp .env.devops .env
-            echo ".env.devops copied to .env"
-          else
-            echo "No .env.devops file found, skipping copy."
           fi
 
-      - name: 🏗️ Build Docker image (BUT DO NOT PUSH)
+      - name: 🐳 Docker image (no push)
         uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.context }}
@@ -94,28 +86,29 @@ jobs:
           push: false
           load: true
           tags: ${{ steps.tags.outputs.tags }}
-          
-  trivy-scan-images:
-    name: 🔍 Trivy Scan (Docker Image)
+
+  # 3️⃣ Trivy Image Scan
+  trivy-image-scan:
+    name: Trivy Scan (Docker Image)
     runs-on: ubuntu-latest
-    needs: build-image
+    needs: docker-image
 
     steps:
-      - name: Install Trivy
+      - name: 🔍 Scan Docker image
         uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: image
-          image-ref: ${{ needs.build-image.outputs.image_tag }}
+          image-ref: ${{ needs.docker-image.outputs.image_tag }}
           format: table
           severity: CRITICAL,HIGH
           vuln-type: os,library
           exit-code: 1
-          
-  # 3️⃣ Push Job
+
+  # 4️⃣ Push Job
   push-image:
     name: Push Docker Image
     runs-on: ubuntu-latest
-    needs: trivy-scan-images
+    needs: trivy-image-scan
 
     permissions:
       contents: read
@@ -125,17 +118,16 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔐 Log in to Container Registry
+      - name: 🔐 Login to Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 📤 Push image to registry
-        run: |
-          docker push ${{ needs.build-image.outputs.image_tag }}
+      - name: 📤 Push image
+        run: docker push ${{ needs.docker-image.outputs.image_tag }}
 
       - name: 📝 Output image info
         run: |
-          echo "🐳 Image poussée : ${{ needs.build-image.outputs.image_tag }}"
+         echo "🐳 Image poussée : ${{ needs.docker-image.outputs.image_tag }}"
