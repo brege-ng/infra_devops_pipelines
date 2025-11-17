@@ -1,10 +1,16 @@
-name: 🐳 Docker Build & Terraform Deploy (LocalStack)
+name: 🐳 Docker Build & Terraform Deploy (Reusable)
 
 on:
-  push:
-    branches:
-      - main
-      - release
+  workflow_call:
+    inputs:
+      dockerfile:
+        required: false
+        type: string
+        default: ./Dockerfile
+      context:
+        required: false
+        type: string
+        default: .
 
 env:
   REGISTRY: ghcr.io
@@ -68,8 +74,8 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
           load: true
           push: false
           tags: ${{ steps.set_tag.outputs.full_tag }}
