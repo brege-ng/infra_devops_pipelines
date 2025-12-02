@@ -37,12 +37,15 @@ jobs:
           exit-code: 1
 
   # -----------------------------
-  # 2️⃣ Build Docker image
+  # 2️⃣ Build, Scan & Push Docker image (TOUT EN UN)
   # -----------------------------
-  build-image:
-    name: Build Docker Image
+  build-scan-push:
+    name: Build, Scan & Push Docker Image
     runs-on: ubuntu-latest
     needs: trivy-fs
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image_tag: ${{ steps.set_tag.outputs.full_tag }}
     steps:
@@ -71,47 +74,6 @@ jobs:
         run: |
           if [ -f .env.devops ]; then cp .env.devops .env; fi
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          load: true
-          push: false
-          tags: ${{ steps.set_tag.outputs.full_tag }}
-
-  # -----------------------------
-  # 3️⃣ Trivy Docker image scan
-  # -----------------------------
-  trivy-image:
-    name: Trivy Docker image scan
-    runs-on: ubuntu-latest
-    needs: build-image
-    steps:
-      - name: Scan Docker image
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          scan-type: image
-          image-ref: ${{ needs.build-image.outputs.image_tag }}
-          format: table
-          severity: CRITICAL,HIGH
-          vuln-type: os,library
-          exit-code: 1
-
-  # -----------------------------
-  # 4️⃣ Push Docker image to GHCR
-  # -----------------------------
-  push-image:
-    name: Push Docker image to GHCR
-    runs-on: ubuntu-latest
-    needs: trivy-image
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -119,16 +81,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push Docker image
-        run: docker push ${{ needs.build-image.outputs.image_tag }}
+      - name: Build Docker image (with load for scanning)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          load: true
+          push: false
+          tags: ${{ steps.set_tag.outputs.full_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan Docker image
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.set_tag.outputs.full_tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: 1
+
+      - name: Push Docker image to GHCR
+        run: docker push ${{ steps.set_tag.outputs.full_tag }}
 
   # -----------------------------
-  # 5️⃣ Terraform deploy on LocalStack
+  # 3️⃣ Terraform deploy on LocalStack
   # -----------------------------
   terraform-apply:
     name: Terraform Apply (LocalStack)
     runs-on: ubuntu-latest
-    needs: push-image
+    needs: build-scan-push
     steps:
       - name: Checkout infra
         uses: actions/checkout@v4
@@ -157,3 +140,166 @@ jobs:
           AWS_REGION: us-east-1
           LOCALSTACK_ENDPOINT: http://localhost:4566
         run: terraform apply -auto-approve
+
+
+
+
+# name: 🐳 Docker Build & Terraform Deploy (Reusable)
+
+# on:
+#   workflow_call:
+#     inputs:
+#       dockerfile:
+#         required: false
+#         type: string
+#         default: ./Dockerfile
+#       context:
+#         required: false
+#         type: string
+#         default: .
+
+# env:
+#   REGISTRY: ghcr.io
+#   IMAGE_NAME: ${{ github.repository }}
+
+# jobs:
+#   # -----------------------------
+#   # 1️⃣ Trivy filesystem scan
+#   # -----------------------------
+#   trivy-fs:
+#     name: Trivy filesystem scan
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Trivy FS scan
+#         uses: aquasecurity/trivy-action@0.20.0
+#         with:
+#           scan-type: fs
+#           format: table
+#           severity: CRITICAL,HIGH
+#           vuln-type: os,library
+#           exit-code: 1
+
+#   # -----------------------------
+#   # 2️⃣ Build Docker image
+#   # -----------------------------
+#   build-image:
+#     name: Build Docker Image
+#     runs-on: ubuntu-latest
+#     needs: trivy-fs
+#     outputs:
+#       image_tag: ${{ steps.set_tag.outputs.full_tag }}
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Setup Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Generate Docker tag
+#         id: set_tag
+#         run: |
+#           SHORT_SHA=$(git rev-parse --short=7 HEAD)
+#           BRANCH="${GITHUB_REF_NAME}"
+#           if [[ "$BRANCH" == "main" ]]; then
+#             TAG="latest"
+#           else
+#             TAG="${BRANCH}-${SHORT_SHA}"
+#           fi
+#           FULL_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+#           echo "tag=$TAG" >> $GITHUB_OUTPUT
+#           echo "full_tag=$FULL_TAG" >> $GITHUB_OUTPUT
+#           echo "Docker image tag: $FULL_TAG"
+
+#       - name: Copy .env.devops → .env
+#         run: |
+#           if [ -f .env.devops ]; then cp .env.devops .env; fi
+
+#       - name: Build Docker image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: ${{ inputs.context }}
+#           file: ${{ inputs.dockerfile }}
+#           load: true
+#           push: false
+#           tags: ${{ steps.set_tag.outputs.full_tag }}
+
+#   # -----------------------------
+#   # 3️⃣ Trivy Docker image scan
+#   # -----------------------------
+#   trivy-image:
+#     name: Trivy Docker image scan
+#     runs-on: ubuntu-latest
+#     needs: build-image
+#     steps:
+#       - name: Scan Docker image
+#         uses: aquasecurity/trivy-action@0.20.0
+#         with:
+#           scan-type: image
+#           image-ref: ${{ needs.build-image.outputs.image_tag }}
+#           format: table
+#           severity: CRITICAL,HIGH
+#           vuln-type: os,library
+#           exit-code: 1
+
+#   # -----------------------------
+#   # 4️⃣ Push Docker image to GHCR
+#   # -----------------------------
+#   push-image:
+#     name: Push Docker image to GHCR
+#     runs-on: ubuntu-latest
+#     needs: trivy-image
+#     permissions:
+#       contents: read
+#       packages: write
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+
+#       - name: Login to GHCR
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Push Docker image
+#         run: docker push ${{ needs.build-image.outputs.image_tag }}
+
+#   # -----------------------------
+#   # 5️⃣ Terraform deploy on LocalStack
+#   # -----------------------------
+#   terraform-apply:
+#     name: Terraform Apply (LocalStack)
+#     runs-on: ubuntu-latest
+#     needs: push-image
+#     steps:
+#       - name: Checkout infra
+#         uses: actions/checkout@v4
+#         with:
+#           path: infra
+
+#       - name: Install Terraform
+#         uses: hashicorp/setup-terraform@v2
+#         with:
+#           terraform_version: 1.9.0
+
+#       - name: Terraform init
+#         working-directory: infra/terraform
+#         env:
+#           AWS_ACCESS_KEY_ID: test
+#           AWS_SECRET_ACCESS_KEY: test
+#           AWS_REGION: us-east-1
+#           LOCALSTACK_ENDPOINT: http://localhost:4566
+#         run: terraform init
+
+#       - name: Terraform apply
+#         working-directory: infra/terraform
+#         env:
+#           AWS_ACCESS_KEY_ID: test
+#           AWS_SECRET_ACCESS_KEY: test
+#           AWS_REGION: us-east-1
+#           LOCALSTACK_ENDPOINT: http://localhost:4566
+#         run: terraform apply -auto-approve
