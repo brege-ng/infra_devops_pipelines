@@ -21,7 +21,7 @@ jobs:
   # 1️⃣ Trivy filesystem scan
   # -----------------------------
   trivy-fs:
-    name: Trivy filesystem scan
+    name: 🔍 Trivy filesystem scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -37,15 +37,12 @@ jobs:
           exit-code: 1
 
   # -----------------------------
-  # 2️⃣ Build, Scan & Push Docker image (TOUT EN UN)
+  # 2️⃣ Build Docker image
   # -----------------------------
-  build-scan-push:
-    name: Build, Scan & Push Docker Image
+  build-image:
+    name: 🏗️ Build Docker Image
     runs-on: ubuntu-latest
     needs: trivy-fs
-    permissions:
-      contents: read
-      packages: write
     outputs:
       image_tag: ${{ steps.set_tag.outputs.full_tag }}
     steps:
@@ -74,6 +71,70 @@ jobs:
         run: |
           if [ -f .env.devops ]; then cp .env.devops .env; fi
 
+      - name: Build and export Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          tags: ${{ steps.set_tag.outputs.full_tag }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  # -----------------------------
+  # 3️⃣ Trivy Docker image scan
+  # -----------------------------
+  trivy-image:
+    name: 🔍 Trivy Docker image scan
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/image.tar
+
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: image
+          image-ref: ${{ needs.build-image.outputs.image_tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: 1
+
+  # -----------------------------
+  # 4️⃣ Push Docker image to GHCR
+  # -----------------------------
+  push-image:
+    name: 📤 Push to GHCR
+    runs-on: ubuntu-latest
+    needs: [build-image, trivy-image]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/image.tar
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -81,37 +142,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image (with load for scanning)
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          load: true
-          push: false
-          tags: ${{ steps.set_tag.outputs.full_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Trivy scan Docker image
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          scan-type: image
-          image-ref: ${{ steps.set_tag.outputs.full_tag }}
-          format: table
-          severity: CRITICAL,HIGH
-          vuln-type: os,library
-          exit-code: 1
-
-      - name: Push Docker image to GHCR
-        run: docker push ${{ steps.set_tag.outputs.full_tag }}
+      - name: Push Docker image
+        run: docker push ${{ needs.build-image.outputs.image_tag }}
 
   # -----------------------------
-  # 3️⃣ Terraform deploy on LocalStack
+  # 5️⃣ Terraform deploy on LocalStack
   # -----------------------------
   terraform-apply:
-    name: Terraform Apply (LocalStack)
+    name: 🚀 Terraform Apply (LocalStack)
     runs-on: ubuntu-latest
-    needs: build-scan-push
+    needs: push-image
     steps:
       - name: Checkout infra
         uses: actions/checkout@v4
@@ -140,7 +180,6 @@ jobs:
           AWS_REGION: us-east-1
           LOCALSTACK_ENDPOINT: http://localhost:4566
         run: terraform apply -auto-approve
-
 
 
 
