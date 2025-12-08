@@ -1,7 +1,7 @@
 name: 🐳 Manual Docker Build (branch auto)
 
 on:
-  workflow_call:    # Permet d'appeler depuis un autre workflow
+  workflow_call:
     inputs:
       dockerfile:
         required: false
@@ -20,14 +20,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-dev-on-branch:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: 📥 Checkout
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -42,23 +42,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🏷️ Générer le tag basé sur la branche
+      - name: 🏷️ Générer le tag Docker
         id: tags
         run: |
-          # Convert repository en lowercase
+          # Repo en lowercase
           IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
-          # Nom de branche clean
           BRANCH="${GITHUB_REF_NAME##*/}"
           CLEAN_BRANCH=$(echo "$BRANCH" | sed 's#[/ ]#-#g' | tr '[:upper:]' '[:lower:]')
 
-          # Tag complet pour GHCR
-          PROD_TAG="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:${CLEAN_BRANCH}"
+          # Tag automatique
+          if [[ "$CLEAN_BRANCH" == "main" ]]; then
+            TAG="latest"
+          else
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            TAG="${CLEAN_BRANCH}-${SHORT_SHA}"
+          fi
 
-          # Sorties GitHub Actions
+          FULL_TAG="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:${TAG}"
+
+          # Outputs GitHub Actions
           echo "image_repo=${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
           echo "branch=${CLEAN_BRANCH}" >> $GITHUB_OUTPUT
-          echo "prod_tag=${PROD_TAG}" >> $GITHUB_OUTPUT
+          echo "prod_tag=${FULL_TAG}" >> $GITHUB_OUTPUT
 
       - name: 📄 Copier .env.devops -> .env
         run: |
@@ -74,9 +79,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 📝 Sortie
+      - name: 📝 Infos Docker
         run: |
           echo "Registry : ${{ env.REGISTRY }}"
           echo "Repo     : ${{ steps.tags.outputs.image_repo }}"
           echo "Branche  : ${{ steps.tags.outputs.branch }}"
-          echo "Tag PROD : ${{ steps.tags.outputs.prod_tag }}"
+          echo "Tag      : ${{ steps.tags.outputs.prod_tag }}"
