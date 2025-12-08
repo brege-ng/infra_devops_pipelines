@@ -53,7 +53,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Generate Docker tag (lowercase repo)
-      - id: set_tag
+        id: set_tag
         run: |
           SHORT_SHA=$(git rev-parse --short=7 HEAD)
           BRANCH="${GITHUB_REF_NAME}"
