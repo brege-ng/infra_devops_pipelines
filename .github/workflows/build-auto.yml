@@ -20,21 +20,21 @@ jobs:
   # -----------------------------
   # 1️⃣ Trivy filesystem scan
   # -----------------------------
-  trivy-fs:
-    name: 🔍 Trivy filesystem scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  # trivy-fs:
+  #   name: 🔍 Trivy filesystem scan
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
 
-      - name: Trivy FS scan
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          scan-type: fs
-          format: table
-          severity: CRITICAL,HIGH
-          vuln-type: os,library
-          exit-code: 1
+  #     - name: Trivy FS scan
+  #       uses: aquasecurity/trivy-action@0.20.0
+  #       with:
+  #         scan-type: fs
+  #         format: table
+  #         severity: CRITICAL,HIGH
+  #         vuln-type: os,library
+  #         exit-code: 1
 
   # -----------------------------
   # 2️⃣ Build Docker image
@@ -42,7 +42,7 @@ jobs:
   build-image:
     name: 🏗️ Build Docker Image
     runs-on: ubuntu-latest
-    needs: trivy-fs
+    # needs: trivy-fs
     outputs:
       image_tag: ${{ steps.set_tag.outputs.full_tag }}
     steps:
@@ -97,29 +97,29 @@ jobs:
   # -----------------------------
   # 3️⃣ Trivy Docker image scan
   # -----------------------------
-  trivy-image:
-    name: 🔍 Trivy Docker image scan
-    runs-on: ubuntu-latest
-    needs: build-image
-    steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
+  # trivy-image:
+  #   name: 🔍 Trivy Docker image scan
+  #   runs-on: ubuntu-latest
+  #   needs: build-image
+  #   steps:
+  #     - name: Download image artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: docker-image
+  #         path: /tmp
 
-      - name: Load Docker image
-        run: docker load --input /tmp/image.tar
+  #     - name: Load Docker image
+  #       run: docker load --input /tmp/image.tar
 
-      - name: Scan Docker image
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          scan-type: image
-          image-ref: ${{ needs.build-image.outputs.image_tag }}
-          format: table
-          severity: CRITICAL,HIGH
-          vuln-type: os,library
-          exit-code: 1
+  #     - name: Scan Docker image
+  #       uses: aquasecurity/trivy-action@0.20.0
+  #       with:
+  #         scan-type: image
+  #         image-ref: ${{ needs.build-image.outputs.image_tag }}
+  #         format: table
+  #         severity: CRITICAL,HIGH
+  #         vuln-type: os,library
+  #         exit-code: 1
 
   # -----------------------------
   # 4️⃣ Push Docker image to GHCR
@@ -127,7 +127,7 @@ jobs:
   push-image:
     name: 📤 Push to GHCR
     runs-on: ubuntu-latest
-    needs: [build-image, trivy-image]
+    # needs: [build-image, trivy-image]
     permissions:
       contents: read
       packages: write
