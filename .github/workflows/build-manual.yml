@@ -1,7 +1,7 @@
 name: 🐳 Manual Docker Build (branch auto)
 
 on:
-  workflow_call:    # <- obligatoire pour l'appeler depuis un autre workflow
+  workflow_call:    # Permet d'appeler depuis un autre workflow
     inputs:
       dockerfile:
         required: false
@@ -27,12 +27,12 @@ jobs:
       packages: write
 
     steps:
-      - name: 📥 Checkout de la branche actuelle
+      - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🐳 Set up Docker Buildx
+      - name: 🐳 Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: 🔐 Login GHCR
@@ -45,19 +45,26 @@ jobs:
       - name: 🏷️ Générer le tag basé sur la branche
         id: tags
         run: |
-          IMAGE_NAME_LOWER="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          # Convert repository en lowercase
+          IMAGE_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          # Nom de branche clean
           BRANCH="${GITHUB_REF_NAME##*/}"
-          CLEAN_BRANCH="$(echo "$BRANCH" | sed 's#[/ ]#-#g' | tr '[:upper:]' '[:lower:]')"
+          CLEAN_BRANCH=$(echo "$BRANCH" | sed 's#[/ ]#-#g' | tr '[:upper:]' '[:lower:]')
+
+          # Tag complet pour GHCR
           PROD_TAG="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:${CLEAN_BRANCH}"
 
+          # Sorties GitHub Actions
           echo "image_repo=${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
           echo "branch=${CLEAN_BRANCH}" >> $GITHUB_OUTPUT
           echo "prod_tag=${PROD_TAG}" >> $GITHUB_OUTPUT
 
       - name: 📄 Copier .env.devops -> .env
-        run: cp .env.devops .env
+        run: |
+          if [ -f .env.devops ]; then cp .env.devops .env; fi
 
-      - name: 🏗️ Build & push Docker
+      - name: 🏗️ Build & Push Docker
         uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.context }}
